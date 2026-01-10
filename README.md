@@ -523,4 +523,30 @@ El sistema incluye **4 transacciones** diseñadas para demostrar cada tipo de de
 - **Human-in-the-Loop**: Casos con baja confianza o por política requieren aprobación humana
 - **Explicabilidad**: Todas las decisiones incluyen justificación auditable
 
+---
+
+## 🚀 Próximos Pasos
+
+### Infraestructura
+- **Amazon OpenSearch Serverless**: Migrar de ChromaDB a OpenSearch con k-NN engine para búsqueda vectorial nativa, eliminando dependencia de `/tmp/` y cold starts
+- **Amazon Bedrock**: Reemplazar OpenAI con Claude 3 + Titan Embeddings para reducir costos y mantener datos en AWS
+- **Multi-Region**: Despliegue en us-east-1, us-west-2, eu-west-1 para menor latencia global
+
+### Escalabilidad
+- **EventBridge + SQS**: Procesamiento asíncrono para alto volumen de transacciones
+- **Lambda Provisioned Concurrency**: Eliminar cold starts en horarios pico
+
+### Inteligencia
+- **Fine-tuning**: Entrenar modelos con histórico de decisiones HITL aprobadas
+- **Graph Neural Networks**: Detección de redes de fraude con Amazon Neptune ML
+- **Feedback Loop**: Actualización automática de políticas RAG basado en resultados
+
+### Observabilidad
+- **AWS X-Ray Service Map**: Visualización completa del flujo multi-agente
+- **CloudWatch Dashboards**: Métricas de precisión, recall, latencia p99, fraud rate
+
+### Seguridad
+- **VPC Endpoints**: Comunicación privada entre servicios AWS
+- **Secrets Rotation**: Rotación automática de API keys
+
 
