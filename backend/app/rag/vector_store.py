@@ -1,5 +1,10 @@
 """Vector store implementation using ChromaDB."""
 from typing import Any
+import os
+
+# Fix SQLite version incompatibility in AWS Lambda BEFORE importing chromadb
+from app.rag import sqlite_shim
+
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
@@ -25,6 +30,7 @@ class Document:
 class VectorStore:
     """
     ChromaDB-based vector store for document retrieval.
+    Uses pysqlite3-binary to provide SQLite 3.35+ compatibility in AWS Lambda.
     """
     
     def __init__(

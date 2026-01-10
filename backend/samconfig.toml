@@ -1,0 +1,17 @@
+version = 0.1
+
+[default.build.parameters]
+template_file = "backend-infrastructure.yaml"
+
+[default.deploy.parameters]
+stack_name = "fraud-detection"
+resolve_s3 = true
+s3_prefix = "fraud-detection"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+image_repositories = ["FraudFunction=039357026566.dkr.ecr.us-east-1.amazonaws.com/frauddetectionbc7222b1/fraudfunctiona01b3b70repo"]
+template_file = ".aws-sam/build/template.yaml"
+
+[default.global.parameters]
+region = "us-east-1"

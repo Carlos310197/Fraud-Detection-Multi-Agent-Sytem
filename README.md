@@ -485,13 +485,235 @@ El sistema incluye **4 transacciones** diseñadas para demostrar cada tipo de de
 
 ## ☁️ Despliegue en AWS
 
-El sistema está diseñado para escalar en AWS:
+### Arquitectura AWS
 
-| Componente Local | AWS Equivalente |
-|------------------|-----------------|
-| JSON Files | Amazon DynamoDB |
-| ChromaDB | Amazon OpenSearch Serverless |
-| Mock LLM | Amazon Bedrock (Claude) |
-| Mock Web Search | Custom Lambda + API Gateway |
-| Docker Compose | Amazon ECS / Fargate |
-| Frontend Static | Amazon S3 + CloudFront |
+El sistema está listo para desplegarse en AWS con la siguiente arquitectura serverless:
+
+```
+┌─────────────┐
+│  Frontend   │──────┐
+│ (S3+CF) *   │      │
+└─────────────┘      │
+                     ▼
+              ┌──────────────┐
+              │  API Gateway │
+              │   (HTTP API) │
+              └──────────────┘
+                     │
+                     ▼
+              ┌──────────────┐
+              │    Lambda    │
+              │  Container   │
+              └──────────────┘
+                     │
+        ┌────────────┼────────────┐
+        ▼            ▼            ▼
+   ┌────────┐  ┌────────┐  ┌────────┐
+   │  DDB   │  │  DDB   │  │  DDB   │
+   │ Trans. │  │ Audit  │  │  HITL  │
+   └────────┘  └────────┘  └────────┘
+        
+        ▲
+        │
+   ┌────────┐
+   │   S3   │
+   │ Input  │
+   └────────┘
+
+* Frontend deployment opcional
+```
+
+### Stack Tecnológico AWS
+
+| Componente Local | AWS Service |
+|------------------|-------------|
+| FastAPI Backend | Lambda Container |
+| HTTP Server | API Gateway (HTTP API) |
+| JSON Files | Amazon DynamoDB (3 tablas) |
+| Local Storage | S3 (input files) |
+| ChromaDB | /tmp (efímero) o EFS (futuro) |
+| Mock LLM | Mock (o Amazon Bedrock) |
+
+### Prerequisitos
+
+1. **AWS CLI** instalado y configurado
+   ```bash
+   aws configure
+   # Ingresa: Access Key, Secret Key, Region (us-east-1), Output format (json)
+   ```
+
+2. **AWS SAM CLI** instalado
+   ```bash
+   # macOS
+   brew install aws-sam-cli
+   
+   # Verificar instalación
+   sam --version
+   ```
+
+3. **Docker** corriendo (para build de container)
+
+### Paso 1: Build y Deploy
+
+```bash
+# Opción A: Deployment guiado (primera vez)
+make aws-deploy
+
+# Durante el proceso, responder:
+# - Stack Name: fraud-detection (o tu nombre preferido)
+# - AWS Region: us-east-1
+# - Confirm changes: Y
+# - Allow SAM CLI IAM role creation: Y
+# - Save arguments to samconfig.toml: Y
+```
+
+Esto creará:
+- ✅ Lambda Function (5 min timeout, 2GB RAM)
+- ✅ API Gateway HTTP API
+- ✅ 3 DynamoDB Tables (PAY_PER_REQUEST)
+- ✅ S3 Bucket para input files
+- ✅ IAM Roles y Policies
+- ✅ CloudWatch Alarms
+
+### Paso 2: Subir Datos de Entrada
+
+```bash
+# Subir archivos de prueba a S3
+make aws-upload-data
+# Ingresa el nombre del bucket (output del deploy)
+```
+
+O manualmente:
+```bash
+BUCKET_NAME=fraud-detection-fraud-input  # Desde outputs
+
+aws s3 cp data/transactions.csv s3://$BUCKET_NAME/
+aws s3 cp data/customer_behavior.csv s3://$BUCKET_NAME/
+aws s3 cp data/fraud_policies.json s3://$BUCKET_NAME/
+```
+
+### Paso 3: Probar la API
+
+```bash
+# Obtener URL del API Gateway
+make aws-outputs
+
+# O directamente
+aws cloudformation describe-stacks \
+  --stack-name fraud-detection \
+  --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' \
+  --output text
+
+# Resultado ejemplo:
+# https://abc123xyz.execute-api.us-east-1.amazonaws.com
+```
+
+Probar endpoints:
+```bash
+API_URL="https://abc123xyz.execute-api.us-east-1.amazonaws.com"
+
+# Health check
+curl $API_URL/health
+
+# Ingest data (carga desde S3)
+curl -X POST $API_URL/ingest
+
+# List transactions
+curl $API_URL/transactions
+
+# Analyze transaction
+curl -X POST $API_URL/transactions/T-2001/analyze
+
+# Get transaction detail
+curl $API_URL/transactions/T-2001
+```
+
+### Paso 4: Monitoreo
+
+```bash
+# Ver logs en tiempo real
+make aws-logs
+
+# Ver métricas en CloudWatch Console
+# - Lambda invocations, errors, duration
+# - DynamoDB read/write capacity
+# - API Gateway requests, latency
+```
+
+### Comandos Útiles
+
+```bash
+# Deploy rápido (sin prompts, usa samconfig.toml)
+make aws-deploy-quick
+
+# Ver outputs del stack (URLs, nombres de recursos)
+make aws-outputs
+
+# Ver logs de Lambda
+make aws-logs
+
+# Eliminar todo el stack
+make aws-delete
+```
+
+### Actualizar el Deployment
+
+```bash
+# Después de cambios en el código
+cd backend
+sam build
+sam deploy  # Usa configuración guardada
+
+# O con Makefile
+make aws-deploy-quick
+```
+
+### Costos Estimados
+
+Para **1000 transacciones/día** con análisis multi-agente:
+
+| Servicio | Uso | Costo Mensual |
+|----------|-----|---------------|
+| Lambda | ~30K invocations, 2GB, 30s avg | ~$5 |
+| DynamoDB | PAY_PER_REQUEST, 10K writes | ~$2 |
+| API Gateway | 30K requests | ~$0.03 |
+| S3 | 1GB storage, minimal requests | ~$0.02 |
+| CloudWatch Logs | 1GB logs | ~$0.50 |
+| **TOTAL** | | **~$7.55/mes** |
+
+**Free Tier** cubre mucho de esto el primer año.
+
+### Limitaciones Actuales
+
+1. **Vector Store**: ChromaDB en `/tmp` se pierde entre ejecuciones
+   - Solución: Montar EFS o migrar a OpenSearch Serverless
+2. **Mock LLM**: Sistema usa mock, no OpenAI real
+   - Solución: Agregar `OPENAI_API_KEY` en environment variables o usar Bedrock
+3. **Sin CI/CD**: Deployment manual
+   - Solución: GitHub Actions con SAM deploy
+
+### Próximos Pasos (Opcional)
+
+1. **Persistencia de Vectores**: Agregar EFS mount
+   ```yaml
+   FileSystemConfig:
+     Arn: !GetAtt EFSAccessPoint.Arn
+     LocalMountPath: /mnt/vectors
+   ```
+
+2. **LLM Real**: Cambiar a OpenAI o Bedrock
+   ```yaml
+   Environment:
+     Variables:
+       LLM_PROVIDER: openai
+       OPENAI_API_KEY: !Ref OpenAIKeyParameter
+   ```
+
+3. **Frontend en S3**: Desplegar React app
+   ```bash
+   cd frontend
+   npm run build
+   aws s3 sync dist/ s3://fraud-frontend-bucket/
+   ```
+
+4. **Custom Domain**: Agregar Route53 + ACM certificate

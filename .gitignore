@@ -70,10 +70,13 @@ frontend/build/
 frontend/.vite/
 
 # Frontend environment
+frontend/.env
+frontend/.env.production
 frontend/.env.local
 frontend/.env.development.local
 frontend/.env.test.local
 frontend/.env.production.local
+!frontend/.env.example
 
 # Environment Variables (keep .env.example)
 .env
@@ -92,6 +95,10 @@ backend/.env
 chroma/
 chromadb/
 .chroma/
+
+# AWS SAM build artifacts
+.aws-sam/
+backend/.aws-sam/
 
 # Logs
 logs/
@@ -130,6 +137,21 @@ coverage/
 docs/_build/
 site/
 
+# Editor / tooling extras
+*.iml
+.python-version
+.ruff_cache/
+nohup.out
+*.zip
+
 # MD files
 challenge.md
 design.md
+AWS_LOGS_GUIDE.md
+DEPLOYMENT_SUMMARY.md
+AWS_DEPLOYMENT.md
+
+# Deployment artifacts and programs
+deploy-frontend.sh
+deploy-frontend-simple.sh
+clear-dynamodb.py

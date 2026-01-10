@@ -5,6 +5,27 @@ from pydantic_settings import BaseSettings
 from functools import lru_cache
 
 
+def _get_openai_api_key() -> str:
+    """Fetch OpenAI API key from environment or AWS Systems Manager Parameter Store."""
+    # First check if it's directly in environment (for testing)
+    if api_key := os.getenv("OPENAI_API_KEY"):
+        return api_key
+    
+    # If running on AWS Lambda, fetch from Parameter Store
+    param_name = os.getenv("OPENAI_KEY_PARAMETER_NAME")
+    if param_name:
+        try:
+            import boto3
+            ssm = boto3.client("ssm", region_name=os.getenv("AWS_REGION", "us-east-1"))
+            response = ssm.get_parameter(Name=param_name, WithDecryption=True)
+            return response["Parameter"]["Value"]
+        except Exception as e:
+            # Log but don't crash - OpenAI might not be needed
+            print(f"Warning: Failed to fetch OpenAI key from Parameter Store: {e}")
+    
+    return ""
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
@@ -35,6 +56,13 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_EMBEDDINGS_MODEL: str = "text-embedding-3-small"
     
+    def __init__(self, **data):
+        """Initialize settings, fetching API key from Parameter Store if needed."""
+        super().__init__(**data)
+        # Override OPENAI_API_KEY with runtime fetch if not already set
+        if not self.OPENAI_API_KEY:
+            self.OPENAI_API_KEY = _get_openai_api_key()
+    
     # Web Search
     WEB_SEARCH_PROVIDER: Literal["mock", "custom"] = "mock"
     WEB_MAX_RESULTS: int = 3
@@ -42,6 +70,7 @@ class Settings(BaseSettings):
     
     # AWS (for future deployment)
     AWS_REGION: str = "us-east-1"
+    INPUT_BUCKET: str = ""  # S3 bucket for input files (AWS mode)
     DDB_TABLE_TRANSACTIONS: str = "fraud_transactions"
     DDB_TABLE_AUDIT: str = "fraud_audit"
     DDB_TABLE_HITL: str = "fraud_hitl"

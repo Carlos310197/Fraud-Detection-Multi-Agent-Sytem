@@ -26,6 +26,11 @@ from app.data.loader import (
     load_policies,
     consolidate,
 )
+from app.data.s3_loader import (
+    load_transactions_from_s3,
+    load_customer_behavior_from_s3,
+    load_policies_from_s3,
+)
 from app.storage.interfaces import TransactionRepository, AuditRepository, HitlRepository
 from app.storage.local_json import (
     LocalJSONTransactionRepository,
@@ -134,22 +139,38 @@ async def ingest_data(settings: Settings = Depends(get_settings)):
     - Loads transactions from CSV
     - Loads customer behavior from CSV
     - Loads and indexes fraud policies
+    
+    In AWS mode, reads from S3 bucket (INPUT_BUCKET env var).
+    In local mode, reads from DATA_DIR filesystem.
     """
     global _transactions, _customers
     
-    data_dir = Path(settings.DATA_DIR)
-    
     try:
-        # Load transactions
-        transactions = load_transactions(data_dir / "transactions.csv")
-        _transactions = transactions
-        
-        # Load customer behavior
-        customers = load_customer_behavior(data_dir / "customer_behavior.csv")
-        _customers = customers
-        
-        # Load policies
-        policies = load_policies(data_dir / "fraud_policies.json")
+        # Check if running in AWS mode with S3
+        if settings.APP_ENV == "aws" and hasattr(settings, "INPUT_BUCKET"):
+            bucket = settings.INPUT_BUCKET
+            logger.info(f"Loading data from S3 bucket: {bucket}")
+            
+            # Load from S3
+            transactions = load_transactions_from_s3(bucket, "transactions.csv")
+            _transactions = transactions
+            
+            customers = load_customer_behavior_from_s3(bucket, "customer_behavior.csv")
+            _customers = customers
+            
+            policies = load_policies_from_s3(bucket, "fraud_policies.json")
+        else:
+            # Load from local filesystem
+            data_dir = Path(settings.DATA_DIR)
+            logger.info(f"Loading data from local directory: {data_dir}")
+            
+            transactions = load_transactions(data_dir / "transactions.csv")
+            _transactions = transactions
+            
+            customers = load_customer_behavior(data_dir / "customer_behavior.csv")
+            _customers = customers
+            
+            policies = load_policies(data_dir / "fraud_policies.json")
         
         # Initialize repositories and save data
         txn_repo, _, _ = _build_repositories(settings)
@@ -195,21 +216,42 @@ async def analyze_transaction(
     
     Runs the full multi-agent pipeline and persists the decision.
     """
-    global _transactions, _customers
+    # In DynamoDB mode, fetch per-request to avoid relying on local CSVs or global cache
+    if settings.STORAGE_BACKEND == "dynamodb":
+        logger.info(f"Analyze request for {transaction_id} using DynamoDB backend")
+        txn_repo, _, _ = _build_repositories(settings)
+        txn = txn_repo.get_transaction(transaction_id)
+        if txn:
+            logger.info(f"Fetched transaction {txn.transaction_id} for customer {txn.customer_id}")
+        if not txn:
+            raise HTTPException(status_code=404, detail=f"Transaction {transaction_id} not found")
+        cust = txn_repo.get_customer_behavior(txn.customer_id)
+        if cust:
+            logger.info(f"Fetched customer profile {cust.customer_id}")
+        if not cust:
+            raise HTTPException(status_code=404, detail=f"Customer {txn.customer_id} profile not found")
+        transactions_map = {txn.transaction_id: txn}
+        customers_map = {cust.customer_id: cust}
+    else:
+        # Local filesystem mode: lazy load all data once
+        global _transactions, _customers
+        if not _transactions:
+            data_dir = Path(settings.DATA_DIR)
+            _transactions = load_transactions(data_dir / "transactions.csv")
+            _customers = load_customer_behavior(data_dir / "customer_behavior.csv")
     
-    # Reload data if not loaded
-    if not _transactions:
-        data_dir = Path(settings.DATA_DIR)
-        _transactions = load_transactions(data_dir / "transactions.csv")
-        _customers = load_customer_behavior(data_dir / "customer_behavior.csv")
-    
-    # Validate transaction exists
-    if transaction_id not in _transactions:
+    # Validate transaction exists in local mode
+    if settings.STORAGE_BACKEND != "dynamodb" and transaction_id not in _transactions:
         raise HTTPException(status_code=404, detail=f"Transaction {transaction_id} not found")
     
     try:
         # Consolidate data
-        consolidated = consolidate(transaction_id, _transactions, _customers)
+        if settings.STORAGE_BACKEND == "dynamodb":
+            consolidated = consolidate(transaction_id, transactions_map, customers_map)
+        else:
+            if transaction_id not in _transactions:
+                raise HTTPException(status_code=404, detail=f"Transaction {transaction_id} not found")
+            consolidated = consolidate(transaction_id, _transactions, _customers)
         
         # Get dependencies
         deps = get_dependencies(settings)

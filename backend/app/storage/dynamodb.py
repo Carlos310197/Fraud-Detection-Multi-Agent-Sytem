@@ -183,14 +183,20 @@ class DynamoDBAuditRepository(AuditRepository):
             KeyConditionExpression=Key("transaction_id").eq(transaction_id),
             ProjectionExpression="seq",
         )
-        max_seq = max(max_seq, *(int(_from_decimal(item.get("seq", 0))) for item in response.get("Items", [])))
+        for item in response.get("Items", []):
+            seq = int(_from_decimal(item.get("seq", 0)))
+            if seq > max_seq:
+                max_seq = seq
         while "LastEvaluatedKey" in response:
             response = self.table.query(
                 KeyConditionExpression=Key("transaction_id").eq(transaction_id),
                 ProjectionExpression="seq",
                 ExclusiveStartKey=response["LastEvaluatedKey"],
             )
-            max_seq = max(max_seq, *(int(_from_decimal(item.get("seq", 0))) for item in response.get("Items", [])))
+            for item in response.get("Items", []):
+                seq = int(_from_decimal(item.get("seq", 0)))
+                if seq > max_seq:
+                    max_seq = seq
         return max_seq + 1 if max_seq > 0 else 1
 
     def clear(self) -> None:
