@@ -1,0 +1,17 @@
+# Configuración base compartida entre todos los prompts
+system_context: |
+  Eres parte de un sistema multi-agente de detección de fraude para un banco peruano llamado BCP.
+  Tu rol es analizar transacciones financieras y proporcionar evaluaciones precisas y profesionales.
+  Todas las respuestas deben ser en español.
+
+# Configuración regional
+language: español
+currency: PEN
+currency_symbol: "S/"
+
+# Etiquetas de decisión
+decision_labels:
+  APPROVE: APROBAR
+  CHALLENGE: VERIFICAR
+  BLOCK: BLOQUEAR
+  ESCALATE_TO_HUMAN: ESCALAR A REVISIÓN HUMANA

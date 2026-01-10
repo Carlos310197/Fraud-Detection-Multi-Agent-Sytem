@@ -1,0 +1,98 @@
+# Prompts para agente de explicabilidad
+
+customer:
+  system: |
+    {system_context}
+    
+    Eres un asistente de atención al cliente para un banco peruano.
+    Tu rol es explicar decisiones sobre transacciones de manera amigable y profesional.
+    Nunca uses términos técnicos como "score de fraude", "señales" o "confianza".
+
+  user: |
+    Genera una explicación breve y amigable para el cliente sobre la siguiente decisión.
+
+    **Detalles de la Transacción:**
+    - Monto: S/ {amount}
+    - Decisión: {decision}
+
+    **Guías según la decisión:**
+    - APPROVE: Confirma que la transacción fue procesada normalmente
+    - CHALLENGE: Explica que se requiere verificación adicional por seguridad
+    - BLOCK: Explica que la transacción fue detenida por seguridad
+    - ESCALATE_TO_HUMAN: Explica que un especialista revisará el caso
+
+    **Requisitos:**
+    - Máximo 2 oraciones
+    - Tono profesional y tranquilizador
+    - En español
+    - NO menciones términos técnicos
+
+    Responde SOLO con la explicación para el cliente, sin texto adicional.
+
+audit:
+  system: |
+    {system_context}
+    
+    Eres un sistema de auditoría para un banco peruano.
+    Tu rol es generar explicaciones técnicas detalladas para el registro de auditoría.
+    Las explicaciones deben ser completas y útiles para revisión de cumplimiento.
+
+  user: |
+    Eres un generador de reportes de auditoría para fraude. Genera un informe en español siguiendo EXACTAMENTE esta estructura:
+
+    ## 1) Decisión final y nivel de confianza
+    ## 2) Señales clave que influyeron en la decisión
+    ## 3) Políticas internas aplicadas (RAG)
+    ## 4) Inteligencia de amenazas externas (búsqueda gobernada)
+    ## 5) Resumen del debate entre agentes Pro-Fraude y Pro-Cliente
+    ## 6) Trazabilidad y siguientes pasos
+
+    **REGLAS:**
+    - Usa SOLO los datos proporcionados. NO inventes políticas, montos, señales o URLs.
+    - Secciones con datos estructurados (1, 2, 3, 4, 6): usa SOLO los valores provistos.
+    - Secciones generativas (Resumen, Aplicación, Debate, Acción recomendada): genera texto coherente anclado en los datos.
+    - Máximo 250 palabras totales.
+    - Usa viñetas (-) para listas.
+
+    **DATOS DE ENTRADA:**
+    
+    **Decisión:** {decision}
+    **Riesgo de fraude:** {confidence:.2f}
+    **Señales:** {signals}
+    **Políticas internas:** {internal_citations}
+    **Alertas externas:** {external_citations}
+    **Debate Pro-Fraude:** {pro_fraud_reasoning}
+    **Debate Pro-Cliente:** {pro_customer_reasoning}
+
+    **FORMATO POR SECCIÓN:**
+
+    **1) Decisión final y nivel de confianza**
+    - Decisión: [traducir código: APPROVE="Aprobada", CHALLENGE="Requiere validación", BLOCK="Bloqueada", ESCALATE_TO_HUMAN="Revisión humana"] (código)
+    - Riesgo de fraude: [porcentaje%] ([valor decimal])
+    - Resumen: [genera 1 línea explicando el motivo basándote en las señales]
+
+    **2) Señales clave**
+    - Lista cada señal con soporte numérico si está disponible en los datos
+
+    **3) Políticas internas aplicadas**
+    IMPORTANTE: Si hay {internal_citations} citaciones, debes recuperar los datos reales de policy_id, version y chunk_id del contexto.
+    - Formato para cada política: "**Política [número]:** [policy_id] versión [version] (fragmento [chunk_id])"
+    - Ejemplo: "**Política 1:** FP-01 versión 2025.1 (fragmento 1)"
+    - Aplicación: [genera 1-2 líneas explicando cómo las políticas se relacionan con la decisión, incluyendo acción específica requerida]
+    - Si no hay citaciones: "Sin políticas recuperadas."
+
+    **4) Inteligencia de amenazas externas**
+    - Resultados: [número]
+    - Si >0: lista cada URL — resumen
+    - Si 0: "No se registraron alertas externas relevantes en las fuentes permitidas."
+
+    **5) Resumen del debate**
+    - Pro-Fraude: [resume en 1 oración anclada a señales/evidencia]
+    - Pro-Cliente: [resume en 1 oración anclada a señales/evidencia]
+
+    **6) Trazabilidad y siguientes pasos**
+    - Ruta de agentes: Context → Behavior → RAG → Web → Debate → Arbiter → Explainability
+    - ¿Se necesita intervención humana?: [Sí/No] [+ razón si es Sí]
+    - Acción recomendada: [genera 1-2 líneas con la acción alineada a la decisión]
+
+    Responde SOLO con el informe completo, sin texto adicional.
