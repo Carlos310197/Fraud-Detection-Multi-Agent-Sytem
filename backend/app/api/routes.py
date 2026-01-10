@@ -26,10 +26,16 @@ from app.data.loader import (
     load_policies,
     consolidate,
 )
+from app.storage.interfaces import TransactionRepository, AuditRepository, HitlRepository
 from app.storage.local_json import (
     LocalJSONTransactionRepository,
     LocalJSONAuditRepository,
     LocalJSONHitlRepository,
+)
+from app.storage.dynamodb import (
+    DynamoDBTransactionRepository,
+    DynamoDBAuditRepository,
+    DynamoDBHitlRepository,
 )
 from app.rag.embedder import get_embedder
 from app.rag.vector_store import VectorStore
@@ -46,6 +52,28 @@ router = APIRouter()
 # Global state for loaded data (in production, use proper dependency injection)
 _transactions: dict[str, Transaction] = {}
 _customers: dict[str, CustomerBehavior] = {}
+
+
+def _build_repositories(settings: Settings) -> tuple[TransactionRepository, AuditRepository, HitlRepository]:
+    if settings.STORAGE_BACKEND == "dynamodb":
+        transaction_repo = DynamoDBTransactionRepository(
+            settings.DDB_TABLE_TRANSACTIONS,
+            region=settings.AWS_REGION,
+        )
+        audit_repo = DynamoDBAuditRepository(
+            settings.DDB_TABLE_AUDIT,
+            region=settings.AWS_REGION,
+        )
+        hitl_repo = DynamoDBHitlRepository(
+            settings.DDB_TABLE_HITL,
+            region=settings.AWS_REGION,
+        )
+        return transaction_repo, audit_repo, hitl_repo
+
+    transaction_repo = LocalJSONTransactionRepository(settings.STORE_DIR)
+    audit_repo = LocalJSONAuditRepository(settings.STORE_DIR)
+    hitl_repo = LocalJSONHitlRepository(settings.STORE_DIR)
+    return transaction_repo, audit_repo, hitl_repo
 
 
 def get_dependencies(settings: Settings = Depends(get_settings)) -> AgentDependencies:
@@ -66,9 +94,7 @@ def get_dependencies(settings: Settings = Depends(get_settings)) -> AgentDepende
     search_service = GovernedSearchService(search_provider, settings.WEB_MAX_RESULTS)
     
     # Repositories
-    transaction_repo = LocalJSONTransactionRepository(settings.STORE_DIR)
-    audit_repo = LocalJSONAuditRepository(settings.STORE_DIR)
-    hitl_repo = LocalJSONHitlRepository(settings.STORE_DIR)
+    _, audit_repo, hitl_repo = _build_repositories(settings)
     
     # LLM Service (optional)
     llm_service = get_llm_service(settings)
@@ -82,19 +108,22 @@ def get_dependencies(settings: Settings = Depends(get_settings)) -> AgentDepende
     )
 
 
-def get_transaction_repo(settings: Settings = Depends(get_settings)) -> LocalJSONTransactionRepository:
+def get_transaction_repo(settings: Settings = Depends(get_settings)) -> TransactionRepository:
     """Get transaction repository."""
-    return LocalJSONTransactionRepository(settings.STORE_DIR)
+    transaction_repo, _, _ = _build_repositories(settings)
+    return transaction_repo
 
 
-def get_audit_repo(settings: Settings = Depends(get_settings)) -> LocalJSONAuditRepository:
+def get_audit_repo(settings: Settings = Depends(get_settings)) -> AuditRepository:
     """Get audit repository."""
-    return LocalJSONAuditRepository(settings.STORE_DIR)
+    _, audit_repo, _ = _build_repositories(settings)
+    return audit_repo
 
 
-def get_hitl_repo(settings: Settings = Depends(get_settings)) -> LocalJSONHitlRepository:
+def get_hitl_repo(settings: Settings = Depends(get_settings)) -> HitlRepository:
     """Get HITL repository."""
-    return LocalJSONHitlRepository(settings.STORE_DIR)
+    _, _, hitl_repo = _build_repositories(settings)
+    return hitl_repo
 
 
 @router.post("/ingest", response_model=IngestResponse)
@@ -123,7 +152,7 @@ async def ingest_data(settings: Settings = Depends(get_settings)):
         policies = load_policies(data_dir / "fraud_policies.json")
         
         # Initialize repositories and save data
-        txn_repo = LocalJSONTransactionRepository(settings.STORE_DIR)
+        txn_repo, _, _ = _build_repositories(settings)
         
         for txn in transactions.values():
             txn_repo.save_transaction(txn)
@@ -193,7 +222,7 @@ async def analyze_transaction(
         )
         
         # Persist decision
-        txn_repo = LocalJSONTransactionRepository(settings.STORE_DIR)
+        txn_repo, _, _ = _build_repositories(settings)
         txn_repo.save_decision(transaction_id, decision)
         
         return decision
@@ -222,7 +251,7 @@ async def analyze_all_pending(
         _transactions = load_transactions(data_dir / "transactions.csv")
         _customers = load_customer_behavior(data_dir / "customer_behavior.csv")
     
-    txn_repo = LocalJSONTransactionRepository(settings.STORE_DIR)
+    txn_repo, _, _ = _build_repositories(settings)
     deps = get_dependencies(settings)
     
     # Find transactions without decisions
@@ -275,7 +304,7 @@ async def analyze_all_pending(
 
 @router.get("/transactions", response_model=list[TransactionSummary])
 async def list_transactions(
-    txn_repo: LocalJSONTransactionRepository = Depends(get_transaction_repo),
+    txn_repo: TransactionRepository = Depends(get_transaction_repo),
 ):
     """List all transactions with their latest decisions."""
     return txn_repo.list_transactions()
@@ -284,8 +313,8 @@ async def list_transactions(
 @router.get("/transactions/{transaction_id}", response_model=TransactionDetailResponse)
 async def get_transaction_detail(
     transaction_id: str,
-    txn_repo: LocalJSONTransactionRepository = Depends(get_transaction_repo),
-    audit_repo: LocalJSONAuditRepository = Depends(get_audit_repo),
+    txn_repo: TransactionRepository = Depends(get_transaction_repo),
+    audit_repo: AuditRepository = Depends(get_audit_repo),
 ):
     """Get full transaction details including audit trail."""
     transaction = txn_repo.get_transaction(transaction_id)
@@ -307,7 +336,7 @@ async def get_transaction_detail(
 
 @router.get("/hitl", response_model=list[HitlCase])
 async def list_hitl_cases(
-    hitl_repo: LocalJSONHitlRepository = Depends(get_hitl_repo),
+    hitl_repo: HitlRepository = Depends(get_hitl_repo),
 ):
     """List all open HITL cases."""
     return hitl_repo.list_open_cases()
@@ -320,9 +349,7 @@ async def resolve_hitl_case(
     settings: Settings = Depends(get_settings),
 ):
     """Resolve a HITL case with a decision."""
-    hitl_repo = LocalJSONHitlRepository(settings.STORE_DIR)
-    audit_repo = LocalJSONAuditRepository(settings.STORE_DIR)
-    txn_repo = LocalJSONTransactionRepository(settings.STORE_DIR)
+    txn_repo, audit_repo, hitl_repo = _build_repositories(settings)
     
     case = hitl_repo.get_case(case_id)
     

@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Fraud Detection Multi-Agent System - AWS V1
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 1024
+
+Resources:
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - "*"
+        AllowHeaders:
+          - "*"
+
+  FraudFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: ANY
+      Environment:
+        Variables:
+          APP_ENV: aws
+          STORAGE_BACKEND: dynamodb
+          DDB_TABLE_TRANSACTIONS: !Ref TransactionsTable
+          DDB_TABLE_AUDIT: !Ref AuditTable
+          DDB_TABLE_HITL: !Ref HitlTable
+          VECTOR_DIR: /tmp/vectors
+          INPUT_DIR: /var/task/.storage/input
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TransactionsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref HitlTable
+    Metadata:
+      Dockerfile: Dockerfile.lambda
+      DockerContext: .
+      DockerTag: fraud-api
+
+  TransactionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: transaction_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: transaction_id
+          KeyType: HASH
+
+  AuditTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: transaction_id
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: transaction_id
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+  HitlTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: case_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: transaction_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: case_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: status-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: transaction-id-index
+          KeySchema:
+            - AttributeName: transaction_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API endpoint
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
