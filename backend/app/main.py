@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from mangum import Mangum
 
 from app.api.routes import router
 from app.core.config import get_settings
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+handler = Mangum(app)
 
 
 if __name__ == "__main__":
