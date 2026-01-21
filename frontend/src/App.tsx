@@ -86,14 +86,8 @@ function App() {
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
-            <Box
-              component="img"
-              src="/bcp-logo.png"
-              alt="BCP Logo"
-              sx={{ height: 30 }}
-            />
             <Typography variant="body2" color="text.secondary">
-              Sistema Multi-Agente para Detección de Fraude - BCP
+              Sistema Multi-Agente para Detección de Fraude
             </Typography>
           </Box>
         </Box>
